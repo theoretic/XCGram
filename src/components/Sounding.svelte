@@ -74,15 +74,79 @@
 
     const viewTransform = () => `translate(${view.x},${view.y}) scale(${view.k})`;
 
+    // ── coordinate helpers for the fixed axes layer ────────────────────────────
+    // Map from plot-local Y (0..ih) to SVG-root Y through the current view.
+    const toSvgY = (ly: number) => view.k * (M.top + ly) + view.y;
+    // Map from plot-local X (0..iw) to SVG-root X through the current view.
+    const toSvgX = (lx: number) => view.k * (M.left + lx) + view.x;
+
+    // ── axes layer (redrawn on every zoom/pan) ─────────────────────────────────
+    // All labels, gridlines and wind barbs live here — outside the zoomroot
+    // transform so their size and position are always in screen units.
+    const drawAxes = () => {
+        if (!svgEl) return;
+        const svg = d3.select(svgEl);
+        const axLayer = svg.select<SVGGElement>('g.axes-fixed');
+        if (axLayer.empty()) return;
+        axLayer.selectAll('*').remove();
+
+        const pTicks = [1000, 900, 800, 700, 600, 500, 400, 300, 200, 150];
+
+        // Pressure gridlines + left-axis labels
+        pTicks.forEach(p => {
+            const sy = toSvgY(Y(p));
+            if (sy < M.top - 2 || sy > H - M.bottom + 2) return;
+            axLayer.append('line')
+                .attr('x1', M.left).attr('x2', M.left + iw)
+                .attr('y1', sy).attr('y2', sy)
+                .attr('stroke', '#2a3340').attr('stroke-width', 0.6);
+            axLayer.append('text')
+                .attr('x', M.left - 6).attr('y', sy + 3)
+                .attr('text-anchor', 'end').attr('class', 'xcg-ax')
+                .text(p);
+        });
+
+        // Temperature axis labels (bottom, follow isotherms horizontally)
+        d3.range(-40, 41, 10).forEach(t => {
+            const sx = toSvgX(X(t, P_BOT));
+            if (sx < M.left - 2 || sx > CW - M.right + 2) return;
+            axLayer.append('text')
+                .attr('x', sx).attr('y', H - M.bottom + 14)
+                .attr('text-anchor', 'middle').attr('class', 'xcg-ax')
+                .text(t);
+        });
+
+        // Marker labels (LCL cloud base, thermal top)
+        const markLabel = (p: number | undefined, label: string, col: string) => {
+            if (p == null) return;
+            const sy = toSvgY(Y(p));
+            if (sy < M.top || sy > H - M.bottom) return;
+            axLayer.append('text')
+                .attr('x', M.left + 4).attr('y', sy - 3)
+                .attr('class', 'xcg-mark').attr('fill', col)
+                .text(label);
+        };
+        markLabel(derived.lcl?.p, 'cloud base', '#cfcf4a');
+        markLabel(derived.thermalTop?.p, 'thermal top', '#36d97a');
+
+        // Wind barbs (right margin, fixed X, zoom-mapped Y)
+        const barbX = M.left + iw + 16;
+        profile.levels.forEach(l => {
+            const spd = Math.hypot(l.u, l.v) * 1.94384; // knots
+            if (Number.isNaN(spd)) return;
+            const sy = toSvgY(Y(l.p));
+            if (sy < M.top || sy > H - M.bottom) return;
+            const ang = Math.atan2(-l.v, -l.u);
+            drawBarb(axLayer, barbX, sy, ang, spd);
+        });
+    };
+
     const draw = () => {
         if (!svgEl) return;
         const svg = d3.select(svgEl).attr('viewBox', `0 0 ${CW} ${H}`);
         svg.selectAll('*').remove();
-        // Everything lives inside one uniformly-scaled, pannable group.
-        const root = svg.append('g').attr('class', 'zoomroot').attr('transform', viewTransform());
-        const g = root.append('g').attr('transform', `translate(${M.left},${M.top})`);
 
-        // clip to plot area
+        // Clip path for data content (in local plot coords, inside zoomroot)
         const clipId = 'xcg-clip';
         svg.append('defs')
             .append('clipPath')
@@ -90,49 +154,27 @@
             .append('rect')
             .attr('width', iw)
             .attr('height', ih);
+
+        // ── zoomroot: data curves only — no text, no axes ─────────────────────
+        // All paths here use vector-effect="non-scaling-stroke" so stroke widths
+        // are constant screen pixels regardless of the zoom scale k.
+        const root = svg.append('g').attr('class', 'zoomroot').attr('transform', viewTransform());
+        const g = root.append('g').attr('transform', `translate(${M.left},${M.top})`);
         const plot = g.append('g').attr('clip-path', `url(#${clipId})`);
 
-        const pTicks = [1000, 900, 800, 700, 600, 500, 400, 300, 200, 150];
         const sampleP = d3.range(P_BOT, P_TOP - 1, -10);
 
-        // pressure grid + labels
-        pTicks.forEach(p => {
-            g.append('line')
-                .attr('x1', 0)
-                .attr('x2', iw)
-                .attr('y1', Y(p))
-                .attr('y2', Y(p))
-                .attr('stroke', '#2a3340')
-                .attr('stroke-width', 0.6);
-            g.append('text')
-                .attr('x', -6)
-                .attr('y', Y(p) + 3)
-                .attr('text-anchor', 'end')
-                .attr('class', 'xcg-ax')
-                .text(p);
-        });
-
-        // isotherms (skewed)
+        // Isotherms (skewed)
         d3.range(-40, 41, 10).forEach(t => {
-            const line = d3
-                .line<number>()
-                .x(p => X(t, p))
-                .y(p => Y(p));
-            plot.append('path')
-                .datum(sampleP)
-                .attr('d', line)
+            const line = d3.line<number>().x(p => X(t, p)).y(p => Y(p));
+            plot.append('path').datum(sampleP).attr('d', line)
                 .attr('fill', 'none')
                 .attr('stroke', t === 0 ? '#3d6ea5' : '#243042')
-                .attr('stroke-width', t === 0 ? 1.1 : 0.6);
-            g.append('text')
-                .attr('x', X(t, P_BOT))
-                .attr('y', ih + 14)
-                .attr('text-anchor', 'middle')
-                .attr('class', 'xcg-ax')
-                .text(t);
+                .attr('stroke-width', t === 0 ? 1.1 : 0.6)
+                .attr('vector-effect', 'non-scaling-stroke');
         });
 
-        // dry adiabats
+        // Dry adiabats
         d3.range(-30, 160, 10).forEach(thC => {
             const th = thC + 273.15;
             const pts = sampleP.map(p => ({ p, t: tempFromTheta(th, p) }));
@@ -140,15 +182,12 @@
                 .line<{ p: number; t: number }>()
                 .x(d => X(d.t, d.p))
                 .y(d => Y(d.p));
-            plot.append('path')
-                .datum(pts)
-                .attr('d', line)
-                .attr('fill', 'none')
-                .attr('stroke', '#3a2f1f')
-                .attr('stroke-width', 0.6);
+            plot.append('path').datum(pts).attr('d', line)
+                .attr('fill', 'none').attr('stroke', '#3a2f1f').attr('stroke-width', 0.6)
+                .attr('vector-effect', 'non-scaling-stroke');
         });
 
-        // isohumes (constant mixing ratio, dashed green)
+        // Isohumes (constant mixing ratio, dashed green)
         [1, 2, 4, 8, 16, 24].forEach(w => {
             const pts = sampleP
                 .filter(p => p >= 300)
@@ -157,76 +196,55 @@
                 .line<{ p: number; t: number }>()
                 .x(d => X(d.t, d.p))
                 .y(d => Y(d.p));
-            plot.append('path')
-                .datum(pts)
-                .attr('d', line)
-                .attr('fill', 'none')
-                .attr('stroke', '#244a35')
-                .attr('stroke-width', 0.5)
-                .attr('stroke-dasharray', '2,3');
+            plot.append('path').datum(pts).attr('d', line)
+                .attr('fill', 'none').attr('stroke', '#244a35').attr('stroke-width', 0.5)
+                .attr('stroke-dasharray', '2,3')
+                .attr('vector-effect', 'non-scaling-stroke');
         });
 
-        // environment temperature & dew point
+        // Environment temperature & dew point
         const env = profile.levels;
-        const tLine = d3
-            .line<typeof env[number]>()
-            .x(d => X(d.t, d.p))
-            .y(d => Y(d.p));
-        const tdLine = d3
-            .line<typeof env[number]>()
-            .x(d => X(d.td, d.p))
-            .y(d => Y(d.p));
-        plot.append('path').datum(env).attr('d', tdLine).attr('fill', 'none').attr('stroke', '#3aa0ff').attr('stroke-width', 2);
-        plot.append('path').datum(env).attr('d', tLine).attr('fill', 'none').attr('stroke', '#ff5a4d').attr('stroke-width', 2);
+        const tLine = d3.line<typeof env[number]>().x(d => X(d.t, d.p)).y(d => Y(d.p));
+        const tdLine = d3.line<typeof env[number]>().x(d => X(d.td, d.p)).y(d => Y(d.p));
+        plot.append('path').datum(env).attr('d', tdLine)
+            .attr('fill', 'none').attr('stroke', '#3aa0ff').attr('stroke-width', 2)
+            .attr('vector-effect', 'non-scaling-stroke');
+        plot.append('path').datum(env).attr('d', tLine)
+            .attr('fill', 'none').attr('stroke', '#ff5a4d').attr('stroke-width', 2)
+            .attr('vector-effect', 'non-scaling-stroke');
 
-        // parcel ascent
+        // Parcel ascent
         const parcel = liftParcel(env[0], env.map(l => l.p));
         const pLine = d3
             .line<{ p: number; t: number }>()
             .x(d => X(d.t, d.p))
             .y(d => Y(d.p));
-        plot.append('path')
-            .datum(parcel)
-            .attr('d', pLine)
-            .attr('fill', 'none')
-            .attr('stroke', '#36d97a')
-            .attr('stroke-width', 1.6)
-            .attr('stroke-dasharray', '4,3');
+        plot.append('path').datum(parcel).attr('d', pLine)
+            .attr('fill', 'none').attr('stroke', '#36d97a').attr('stroke-width', 1.6)
+            .attr('stroke-dasharray', '4,3')
+            .attr('vector-effect', 'non-scaling-stroke');
 
-        // markers: LCL & thermal top
-        const mark = (gh: number | undefined, p: number | undefined, label: string, col: string) => {
+        // Marker lines (LCL & thermal top) — live inside clip so they zoom with data
+        const markLine = (p: number | undefined, col: string) => {
             if (p == null) return;
-            g.append('line')
-                .attr('x1', 0)
-                .attr('x2', iw)
-                .attr('y1', Y(p))
-                .attr('y2', Y(p))
-                .attr('stroke', col)
-                .attr('stroke-width', 1)
-                .attr('stroke-dasharray', '6,4')
-                .attr('opacity', 0.7);
-            g.append('text')
-                .attr('x', 4)
-                .attr('y', Y(p) - 3)
-                .attr('class', 'xcg-mark')
-                .attr('fill', col)
-                .text(label);
+            plot.append('line')
+                .attr('x1', 0).attr('x2', iw)
+                .attr('y1', Y(p)).attr('y2', Y(p))
+                .attr('stroke', col).attr('stroke-width', 1)
+                .attr('stroke-dasharray', '6,4').attr('opacity', 0.7)
+                .attr('vector-effect', 'non-scaling-stroke');
         };
-        mark(derived.lcl?.gh, derived.lcl?.p, 'cloud base', '#cfcf4a');
-        mark(derived.thermalTop?.gh, derived.thermalTop?.p, 'thermal top', '#36d97a');
+        markLine(derived.lcl?.p, '#cfcf4a');
+        markLine(derived.thermalTop?.p, '#36d97a');
 
-        // wind barbs on the right margin
-        const bx = iw + 16;
-        env.forEach(l => {
-            const spd = Math.hypot(l.u, l.v) * 1.94384; // knots
-            if (Number.isNaN(spd)) return;
-            const y = Y(l.p);
-            const ang = Math.atan2(-l.v, -l.u); // direction wind blows toward, screen coords
-            drawBarb(g, bx, y, ang, spd);
-        });
-
-        // transparent capture surface for pointer hover/zoom/pan
+        // Transparent capture rect for pointer events inside the plot area
         g.append('rect').attr('width', iw).attr('height', ih).attr('fill', 'transparent');
+
+        // ── fixed axes layer — rendered on top, not scaled ────────────────────
+        // Created here; populated by drawAxes() which is also called on every
+        // zoom/pan so gridlines and labels track the current view.
+        svg.append('g').attr('class', 'axes-fixed');
+        drawAxes();
     };
 
     const drawBarb = (g: any, x: number, y: number, ang: number, kt: number) => {
@@ -256,23 +274,17 @@
         }
         while (rem >= 10) {
             g.append('line')
-                .attr('x1', px)
-                .attr('y1', py)
-                .attr('x2', px + bx * 7)
-                .attr('y2', py + by * 7)
-                .attr('stroke', '#cdd6e0')
-                .attr('stroke-width', 1);
+                .attr('x1', px).attr('y1', py)
+                .attr('x2', px + bx * 7).attr('y2', py + by * 7)
+                .attr('stroke', '#cdd6e0').attr('stroke-width', 1);
             back(1);
             rem -= 10;
         }
         if (rem >= 5) {
             g.append('line')
-                .attr('x1', px)
-                .attr('y1', py)
-                .attr('x2', px + bx * 4)
-                .attr('y2', py + by * 4)
-                .attr('stroke', '#cdd6e0')
-                .attr('stroke-width', 1);
+                .attr('x1', px).attr('y1', py)
+                .attr('x2', px + bx * 4).attr('y2', py + by * 4)
+                .attr('stroke', '#cdd6e0').attr('stroke-width', 1);
         }
     };
 
@@ -287,8 +299,10 @@
         };
     };
 
-    const applyTransform = () =>
+    const applyTransform = () => {
         d3.select(svgEl).select('g.zoomroot').attr('transform', viewTransform());
+        drawAxes();
+    };
 
     /** Keep the scaled drawing covering the viewport (no empty margins). */
     const clampPan = (v: { k: number; x: number; y: number }) => {

@@ -59,7 +59,7 @@ const fetchProfiles = (model: Products, lat: number, lon: number): Promise<Sound
     const key = keyOf(String(model), lat, lon);
     let pending = cache.get(key);
     if (!pending) {
-        pending = getMeteogramForecastData(model, { lat, lon } as LatLon, PLUGIN)
+        pending = getMeteogramForecastData(model, { lat, lon, step: 1 } as never, PLUGIN)
             .then(res => loadSoundingsFromPayload(res.data, String(model)))
             .catch(() => null);
         cache.set(key, pending);

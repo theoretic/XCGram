@@ -87,12 +87,18 @@ export const loadSoundingsFromPayload = (
 
 /**
  * Fetch a meteogram for a point and reshape it into per-hour SoundingProfiles.
+ *
+ * `step: 1` asks node-forecast for 1-hour resolution — the same request the
+ * native Windy sounding makes. Models whose point-forecast backend serves 1-hour
+ * data (ECMWF, ICON-EU, ICON-D2, AROME) return a 1-hour `hours` array; others
+ * fall back to their native step (e.g. GFS 3-hour). No client-side interpolation
+ * is added: the slider shows exactly the timestamps the server provides.
  */
 export const loadSoundings = async (
     latLon: LatLon,
     model: Products,
 ): Promise<{ profiles: SoundingProfile[]; model: string; updateTs: number }> => {
-    const { data: payload } = await getMeteogramForecastData(model, latLon, PLUGIN);
+    const { data: payload } = await getMeteogramForecastData(model, { ...latLon, step: 1 } as never, PLUGIN);
     const updateTs = (payload as MeteogramDataPayload).header?.updateTs ?? 0;
     return { profiles: loadSoundingsFromPayload(payload, String(model)), model: String(model), updateTs };
 };
