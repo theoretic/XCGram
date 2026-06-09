@@ -10,3 +10,8 @@ package-lock.json
 *.log
 dist/*
 
+# Local TLS dev certs / keys (mkcert) — never commit private keys
+certs/
+*.pem
+windy-dev-cert.pem
+

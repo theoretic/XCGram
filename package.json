@@ -1,7 +1,7 @@
 {
-    "name": "windy-plugin-template",
-    "version": "5.0.1",
-    "description": "Template for developing Windy Plugins",
+    "name": "windy-plugin-xcgram",
+    "version": "0.1.0",
+    "description": "Interactive aerological sounding (Skew-T log-P) with plain-language explanations for free-flight and XC pilots, built on Windy forecast data.",
     "main": "dist/plugin.min.js",
     "type": "module",
     "scripts": {
@@ -18,22 +18,24 @@
         "build:all-examples": "for number in 01 02 03 04 05 06; do CONFIG=example$number SERVE=false rollup -c; done",
         "test": "echo \"Error: no test specified\" && exit 1"
     },
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/windycom/windy-plugin-template.git"
-    },
     "keywords": [
         "windy",
         "windy.com",
-        "plugins"
+        "plugin",
+        "sounding",
+        "skew-t",
+        "paragliding",
+        "soaring",
+        "meteorology"
     ],
-    "author": "Windyty, S.E.",
-    "license": "ISC",
-    "bugs": {
-        "url": "https://github.com/windycom/windy-plugin-template/issues"
-    },
+    "author": "xcgram",
+    "license": "MIT",
     "homepage": "https://docs.windy-plugins.com/",
     "dependencies": {
-        "@windycom/plugin-devtools": "^3.0.3"
+        "@windycom/plugin-devtools": "^3.0.3",
+        "d3": "^7.9.0"
+    },
+    "devDependencies": {
+        "@types/d3": "^7.4.3"
     }
 }

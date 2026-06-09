@@ -1,16 +1,22 @@
 import type { ExternalPluginConfig } from '@windy/interfaces';
 
 const config: ExternalPluginConfig = {
-    name: 'windy-plugin-my-plugin',
+    name: 'windy-plugin-xcgram',
     version: '0.1.0',
-    icon: '🔌',
-    title: 'This is my first plugin',
-    description: 'This is my first plugin.',
-    author: 'John Doe (optional company name)',
-    repository: 'https://github.com/windycom/windy-plugin-template',
+    icon: '🪂',
+    title: 'XCGram — Sounding for pilots',
+    description:
+        'Interactive aerological sounding (Skew-T log-P) with plain-language explanations: cloud base, thermal top, CAPE, inversions, freezing level and wind shear for free-flight and XC pilots.',
+    author: 'xcgram',
+    repository: 'https://github.com/your/xcgram',
     desktopUI: 'rhpane',
+    desktopWidth: 460,
     mobileUI: 'fullscreen',
-    routerPath: '/my-plugin',
+    routerPath: '/xcgram',
+    // Add an entry to the right-click context menu ("Show XCGram sounding")
+    addToContextmenu: true,
+    // Receive the picked LatLon whenever the user single-clicks the map
+    listenToSingleclick: true,
     private: true,
 };
 

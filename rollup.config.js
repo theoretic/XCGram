@@ -11,8 +11,19 @@ import { less } from 'svelte-preprocess-less';
 import sveltePreprocess from 'svelte-preprocess';
 
 import { transformCodeToESMPlugin, keyPEM, certificatePEM } from '@windycom/plugin-devtools';
+import { existsSync, readFileSync } from 'node:fs';
 
 const useSourceMaps = true;
+
+// The bundled Windy dev cert has no Subject Alternative Name, so Chromium
+// (Edge/Chrome) rejects it even after trusting it (ERR_CERT_COMMON_NAME_INVALID).
+// If a locally-trusted cert with a SAN exists in ./certs (e.g. from mkcert),
+// use it instead so windy.com can load this localhost dev server cross-origin.
+//   mkcert -install
+//   mkcert -cert-file certs/localhost.pem -key-file certs/localhost-key.pem localhost 127.0.0.1 ::1
+const LOCAL_CERT = 'certs/localhost.pem';
+const LOCAL_KEY = 'certs/localhost-key.pem';
+const useLocalCert = existsSync(LOCAL_CERT) && existsSync(LOCAL_KEY);
 
 const buildConfigurations = {
     src: {
@@ -109,10 +120,17 @@ export default {
                 port: 9999,
                 headers: {
                     'Access-Control-Allow-Origin': '*',
+                    // Allow windy.com (public HTTPS) to fetch this localhost dev
+                    // server. Without this, modern Chromium/Edge block the
+                    // public->private request via Private Network Access (PNA)
+                    // and Windy shows a misleading "dev server not running" error.
+                    'Access-Control-Allow-Private-Network': 'true',
+                    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+                    'Access-Control-Allow-Headers': '*',
                 },
                 https: {
-                    key: keyPEM,
-                    cert: certificatePEM,
+                    key: useLocalCert ? readFileSync(LOCAL_KEY) : keyPEM,
+                    cert: useLocalCert ? readFileSync(LOCAL_CERT) : certificatePEM,
                 },
             }),
     ],
