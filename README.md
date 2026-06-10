@@ -106,6 +106,23 @@ src/
     MapLayers.svelte   the Layers tab (controls, sampling, legend)
 ```
 
+## Install (hosted)
+
+The plugin is built and published to GitHub Pages automatically. To use it, just
+load this URL in Windy — no build, no local server:
+
+1. Open **https://www.windy.com/developer-mode**.
+2. Load the plugin URL:
+   ```
+   https://theoretic.github.io/XCGram/plugin.min.js
+   ```
+3. It opens on the map centre; **click anywhere** (or right-click → *XCGram*) to
+   load the sounding for another point.
+
+Pages serves over HTTPS with `Access-Control-Allow-Origin: *`, which is what
+Windy's cross-origin loader requires. The sibling `plugin.json` (config) is
+deployed alongside the bundle at the same path.
+
 ## Develop & run locally
 
 ```bash
@@ -140,15 +157,30 @@ checks.
 3. The plugin opens on the map centre; **click anywhere** (or right-click →
    *XCGram*) to load the sounding for another point.
 
-## Build for distribution
+## Build & deploy
+
+Build the distributable bundle locally:
 
 ```bash
 npm run build        # macOS/Linux
 npm run build:win    # Windows
 ```
 
-Outputs `dist/plugin.min.js` plus `package.json`, ready to publish as an npm
-package and install on Windy by name.
+Outputs `dist/` containing `plugin.min.js` (the production bundle), `plugin.js`
+(+ sourcemap), `plugin.json` (compiled config) and `package.json`.
+
+### Automatic GitHub Pages deploy
+
+Every push to `main` runs `.github/workflows/deploy-pages.yml`, which builds
+`dist/` and publishes it to GitHub Pages at
+`https://theoretic.github.io/XCGram/plugin.min.js` (see [Install](#install-hosted)).
+No manual step — just push.
+
+- One-time setup: repo **Settings → Pages → Source = "GitHub Actions"**.
+- `npm ci` in the workflow needs the committed `package-lock.json` — it is tracked.
+- **Bump `version` in `src/pluginConfig.ts` per release**, or Windy serves a cached
+  copy of the previous bundle.
+- Editing files under `.github/workflows/` requires a token with `workflow` scope.
 
 ## Notes & limitations
 
