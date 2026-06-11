@@ -12,8 +12,9 @@ CAPE/CIN numbers mean for your flight. It can also paint those derived values as
 
 The right-hand panel has three tabs. The **model selector** and **forecast time
 slider** are shared by Diagram and Layers, so both stay on the same model and
-hour. On open, a sounding is auto-loaded for the **map centre** so the timeline
-is live before you click anything.
+hour. The slider runs at a **1-hour step** (24-hour clock); on open, a sounding
+is auto-loaded for the **map centre** so the timeline is live before you click
+anything.
 
 ### Diagram
 
@@ -27,16 +28,22 @@ is live before you click anything.
 - **Thermal-activity column** (toggle 🔥): stacked 100 m bars on the pressure axis
   whose length and colour follow the local environmental lapse rate — red where
   it's dry-adiabatic or steeper (unstable), green through inversions (stable).
-- Both helper layers are **on by default**; toggle them from the buttons floated
-  right in the controls row (Diagram tab).
-- **Hover readout**: height, pressure, temperature, dew point and wind at the cursor.
+- Both helper layers are **on by default** (buttons floated right in the controls
+  row) and are **pinned to the left boundary at any zoom**: constant screen size
+  horizontally, vertically tracking the zoomed height scale.
+- **Combined axis labels** — each pressure gridline is labelled
+  `1870m / 797hPa`, heights interpolated from the live profile, with a dark text
+  halo so they stay readable over the helper layers.
+- **Hover readout**: height, pressure, temperature, dew point and wind at the
+  cursor; flips sides near the right edge so it never leaves the pane.
 - **Zoom & pan**: mouse wheel (zoom about cursor), pinch (touch), drag to pan in
   both directions, double-click or the ⤢ button to reset. Zoom is a uniform
   affine transform, so curve **inclinations stay fixed** at any scale.
 - **Explanation cards** for cloud base, thermal top, CAPE, CIN, trigger
   temperature, freezing level, inversions, boundary-layer wind, wind shear and a
   thermal-strength estimate — each colour-coded and expandable into *what it is*
-  and *why it matters in the air*.
+  and *why it matters in the air*. The CAPE card adds ⛈️ pictograms: none under
+  1000 J/kg, then one per extra 500 J/kg (capped at five).
 
 ### Layers
 
@@ -88,6 +95,23 @@ height at the standard pressure levels (1000…150 hPa) plus the surface. No API
 key is needed; the plugin only runs on the windy.com domain. Derived quantities
 (LCL, CAPE/CIN, parcel ascent, etc.) are computed locally in `src/lib/thermo.ts`
 using standard parcel theory (Bolton 1980).
+
+### 1-hour time step
+
+The plugin mirrors the native Windy sounding's behaviour (verified against the
+windy.com client code):
+
+- It requests `step: 1` when the account has a subscription
+  (`@windy/subscription.hasAny()`). **Genuine 1-hour data is a Premium feature**,
+  gated server-side on the session token — free accounts are served 3-hour data
+  regardless of the requested step.
+- The native sounding then follows the 1-hour timeline by **linearly
+  interpolating every level between the two bracketing forecast profiles**. The
+  plugin does the same (`interpolateTo1h` in `src/lib/windyData.ts`), so the
+  slider reads 1 h on any account; it is a no-op when the payload is already
+  hourly.
+- Map overlays deliberately stay on 3-hour fetches to keep grid payloads small;
+  a nearest-profile lookup bridges the step mismatch.
 
 ## Project layout
 
