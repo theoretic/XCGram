@@ -1,6 +1,6 @@
 {
     "name": "windy-plugin-xcgram",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "description": "Interactive aerological sounding (Skew-T log-P) with plain-language explanations for free-flight and XC pilots, built on Windy forecast data.",
     "main": "dist/plugin.min.js",
     "type": "module",

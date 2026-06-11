@@ -22,6 +22,7 @@
         weekday: 'short',
         hour: '2-digit',
         minute: '2-digit',
+        hour12: false, // always 24-hour clock
     });
 
     $: label = profiles[index] ? fmt.format(new Date(profiles[index].ts)) : '—';

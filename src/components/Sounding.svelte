@@ -13,7 +13,12 @@
         <button class="xcg-zoom-reset" on:click={resetZoom} title="Reset zoom">⤢</button>
     {/if}
     {#if hover}
-        <div class="xcg-readout" style="left:{hover.x + 12}px; top:{hover.y}px">
+        <div
+            class="xcg-readout"
+            style={hover.flip
+                ? `right:${hover.cw - hover.x + 12}px; top:${hover.y}px`
+                : `left:${hover.x + 12}px; top:${hover.y}px`}
+        >
             <b>{Math.round(hover.gh).toLocaleString()} m</b> · {Math.round(hover.p)} hPa<br />
             T {hover.t.toFixed(1)}°C · Td {hover.td.toFixed(1)}°C<br />
             {compass(hover.dir)} {Math.round(hover.spd * 3.6)} km/h
@@ -27,7 +32,7 @@
 
     import { theta, tempFromTheta, liftParcel, esat } from '../lib/thermo';
     import { EPS } from '../lib/levels';
-    import { cloudLayers, thermalColumn } from '../lib/diagramLayers';
+    import { cloudLayers, thermalColumn, type CloudLayer } from '../lib/diagramLayers';
     import type { Derived, SoundingProfile } from '../types';
 
     export let profile: SoundingProfile;
@@ -37,8 +42,20 @@
     export let showThermal = true;
 
     let svgEl: SVGSVGElement;
-    let hover: { x: number; y: number; p: number; gh: number; t: number; td: number; spd: number; dir: number } | null =
-        null;
+    let hover: {
+        x: number;
+        y: number;
+        /** Container CSS width — used to keep the readout inside the right edge. */
+        cw: number;
+        /** True near the right edge: render the readout left of the cursor. */
+        flip: boolean;
+        p: number;
+        gh: number;
+        t: number;
+        td: number;
+        spd: number;
+        dir: number;
+    } | null = null;
 
     // NB: do not name a top-level const `W` — Windy's plugin loader binds every
     // `@windy/*` import to a global `W`, so a module-scope `W` shadows it and
@@ -104,63 +121,76 @@
     };
 
     /**
-     * Cloud-development mock: one dense bunch of light-grey circles per humid
-     * layer, centred on the left pressure axis (local x = 0). The bunch's
-     * vertical extent mirrors the cloud-layer thickness; circle count and opacity
-     * scale with cloudiness. Horizontal spread is triangular (centre-dense) and
-     * capped at 25 % of the diagram width; the left half spills past the axis and
-     * is clipped at the SVG edge, as requested.
+     * Cloud circle layouts are random; cache them per profile so the zoom/pan
+     * redraw (drawAxes runs on every gesture) doesn't re-roll the bunches.
+     * Offsets are stored relative to the band: dx in screen px off the axis,
+     * fy as a 0..1 fraction of the band height.
      */
-    const drawCloudLayer = (g: any) => {
-        if (!showClouds) return;
-        const layers = cloudLayers(profile);
-        const bunchW = 0.25 * CW; // max bunch width = 25 % of diagram width
-        const halfW = bunchW / 2;
-        const grp = g.append('g').attr('class', 'xcg-clouds');
-        layers.forEach(cl => {
-            const yTop = Y(cl.pTop);
-            const yBot = Y(cl.pBot);
-            const bandH = Math.max(6, yBot - yTop); // = cloud-layer thickness
-            const cy = (yTop + yBot) / 2;
-            const n = Math.max(8, Math.round(cl.prob * 64)); // denser
+    let cloudSpecProfile: SoundingProfile | null = null;
+    let cloudBands: CloudLayer[] = [];
+    let cloudSpecs: { li: number; dx: number; fy: number; r: number; op: number }[] = [];
+
+    const ensureCloudSpecs = () => {
+        if (cloudSpecProfile === profile) return;
+        cloudSpecProfile = profile;
+        cloudBands = cloudLayers(profile);
+        cloudSpecs = [];
+        const halfW = (0.25 * CW) / 2; // max bunch width = 25 % of diagram width
+        cloudBands.forEach((cl, li) => {
+            const n = Math.max(8, Math.round(cl.prob * 64));
             for (let i = 0; i < n; i++) {
-                // Triangular distribution → tight, centre-weighted horizontal cluster.
+                // Triangular distribution → tight, centre-weighted cluster on the axis.
                 const tri = Math.random() + Math.random() - 1; // ~[-1, 1]
-                const cx = tri * halfW;
-                const yy = cy + (Math.random() - 0.5) * bandH;
-                const r = 5 + Math.random() * (5 + cl.prob * 8);
-                const op = Math.min(0.75, 0.16 + cl.prob * 0.45 * (0.6 + 0.4 * Math.random()));
-                grp.append('circle')
-                    .attr('cx', cx)
-                    .attr('cy', yy)
-                    .attr('r', r)
-                    .attr('fill', '#c3c9d2')
-                    .attr('opacity', op)
-                    .attr('vector-effect', 'non-scaling-stroke');
+                cloudSpecs.push({
+                    li,
+                    dx: tri * halfW,
+                    fy: Math.random(),
+                    r: 5 + Math.random() * (5 + cl.prob * 8),
+                    op: Math.min(0.75, 0.16 + cl.prob * 0.45 * (0.6 + 0.4 * Math.random())),
+                });
             }
         });
     };
 
     /**
-     * Thermal-activity column: stacked 100 m bars rising from the left axis. Bar
-     * length and colour both follow the local environmental lapse rate — red and
-     * full-width where it is dry-adiabatic or steeper (unstable), green and a thin
-     * sliver through inversions (stable). Per-height, so it does not grow with
-     * altitude the way an integrated updraft would.
+     * Cloud-development mock, drawn in the FIXED layer: horizontally pinned to
+     * the left pressure axis at any zoom (constant screen size), vertically the
+     * band tracks the zoomed pressure scale. Bunch height = cloud-layer thickness.
      */
-    const drawThermalLayer = (g: any) => {
-        if (!showThermal || !derived) return;
+    const drawCloudsFixed = (g: any) => {
+        ensureCloudSpecs();
+        cloudSpecs.forEach(s => {
+            const cl = cloudBands[s.li];
+            const yTop = toSvgY(Y(cl.pTop));
+            const yBot = toSvgY(Y(cl.pBot));
+            const bandH = Math.max(6, yBot - yTop);
+            g.append('circle')
+                .attr('cx', M.left + s.dx)
+                .attr('cy', yTop + s.fy * bandH)
+                .attr('r', s.r)
+                .attr('fill', '#c3c9d2')
+                .attr('opacity', s.op);
+        });
+    };
+
+    /**
+     * Thermal-activity column, drawn in the FIXED layer: bars start at the left
+     * boundary with constant screen width regardless of zoom; bar tops/bottoms
+     * follow the zoomed height scale. Red = dry-adiabatic or steeper lapse rate,
+     * green = inversion.
+     */
+    const drawThermalFixed = (g: any) => {
+        if (!derived) return;
         const { segs } = thermalColumn(profile, derived);
         if (!segs.length) return;
         const maxBar = 0.2 * iw;
-        const grp = g.append('g').attr('class', 'xcg-thermal');
         segs.forEach(s => {
-            const yTop = yOfGh(s.ghTop);
-            const yBot = yOfGh(s.ghBot);
+            const yTop = toSvgY(yOfGh(s.ghTop));
+            const yBot = toSvgY(yOfGh(s.ghBot));
             const h = Math.max(1, yBot - yTop);
             const frac = Math.max(0.08, Math.min(1, s.tNorm)); // inversion → min sliver
-            grp.append('rect')
-                .attr('x', 0)
+            g.append('rect')
+                .attr('x', M.left)
                 .attr('y', yTop)
                 .attr('width', frac * maxBar)
                 .attr('height', h)
@@ -185,9 +215,32 @@
         if (axLayer.empty()) return;
         axLayer.selectAll('*').remove();
 
+        // Helper layers (clouds + thermal bars): screen-fixed to the left axis,
+        // clipped to the plot area, painted under the gridlines and labels.
+        const helpers = axLayer.append('g').attr('clip-path', 'url(#xcg-clip-ax)');
+        if (showClouds) drawCloudsFixed(helpers);
+        if (showThermal) drawThermalFixed(helpers);
+
         const pTicks = [1000, 900, 800, 700, 600, 500, 400, 300, 200, 150];
 
-        // Pressure gridlines + left-axis labels
+        // Geopotential height (m MSL) for a pressure, from the profile's gh↔p
+        // grid (log-p interpolation). Null when p lies outside the profile
+        // (e.g. underground over elevated terrain).
+        const ghAtP = (p: number): number | null => {
+            const L = profile.levels;
+            for (let i = 0; i < L.length - 1; i++) {
+                const a = L[i];
+                const b = L[i + 1];
+                if (p <= a.p && p >= b.p) {
+                    const f = (Math.log(p) - Math.log(a.p)) / (Math.log(b.p) - Math.log(a.p) || 1);
+                    return a.gh + f * (b.gh - a.gh);
+                }
+            }
+            return null;
+        };
+
+        // Pressure gridlines + "1870m / 797hPa" labels. The combined label is too
+        // wide for the left margin, so it sits inside the plot, above the line.
         pTicks.forEach(p => {
             const sy = toSvgY(Y(p));
             if (sy < M.top - 2 || sy > H - M.bottom + 2) return;
@@ -195,10 +248,11 @@
                 .attr('x1', M.left).attr('x2', M.left + iw)
                 .attr('y1', sy).attr('y2', sy)
                 .attr('stroke', '#2a3340').attr('stroke-width', 0.6);
+            const gh = ghAtP(p);
             axLayer.append('text')
-                .attr('x', M.left - 6).attr('y', sy + 3)
-                .attr('text-anchor', 'end').attr('class', 'xcg-ax')
-                .text(p);
+                .attr('x', M.left + 3).attr('y', sy - 2)
+                .attr('text-anchor', 'start').attr('class', 'xcg-ax')
+                .text(gh == null ? `${p}hPa` : `${Math.round(gh)}m / ${p}hPa`);
         });
 
         // Temperature axis labels (bottom, follow isotherms horizontally)
@@ -241,12 +295,20 @@
         const svg = d3.select(svgEl).attr('viewBox', `0 0 ${CW} ${H}`);
         svg.selectAll('*').remove();
 
+        const defs = svg.append('defs');
         // Clip path for data content (in local plot coords, inside zoomroot)
         const clipId = 'xcg-clip';
-        svg.append('defs')
-            .append('clipPath')
+        defs.append('clipPath')
             .attr('id', clipId)
             .append('rect')
+            .attr('width', iw)
+            .attr('height', ih);
+        // Clip path for the fixed helper layers (screen coords, axes-fixed layer)
+        defs.append('clipPath')
+            .attr('id', 'xcg-clip-ax')
+            .append('rect')
+            .attr('x', M.left)
+            .attr('y', M.top)
             .attr('width', iw)
             .attr('height', ih);
 
@@ -255,10 +317,6 @@
         // are constant screen pixels regardless of the zoom scale k.
         const root = svg.append('g').attr('class', 'zoomroot').attr('transform', viewTransform());
         const g = root.append('g').attr('transform', `translate(${M.left},${M.top})`);
-
-        // Helper layers paint first, behind the thermodynamic curves.
-        drawCloudLayer(g);
-        drawThermalLayer(g);
 
         const plot = g.append('g').attr('clip-path', `url(#${clipId})`);
 
@@ -522,9 +580,14 @@
         // local point → svg space → css px for the readout
         const svgX = view.k * (M.left + X(t, p)) + view.x;
         const svgY = view.k * (M.top + Y(p)) + view.y;
+        const cssX = svgX * (rect.width / CW);
         hover = {
-            x: svgX * (rect.width / CW),
+            x: cssX,
             y: svgY * (rect.height / H),
+            cw: rect.width,
+            // Near the right edge the readout would overflow the pane — flip it
+            // to the left side of the cursor instead.
+            flip: cssX > rect.width * 0.55,
             p,
             gh,
             t,
@@ -579,12 +642,21 @@
         background: #16212e;
     }
     :global(.xcg-ax) {
-        fill: #7c8a99;
+        fill: #aeb9c4;
         font-size: 9px;
+        // Dark halo so labels stay readable over the thermal bars / cloud mocks
+        paint-order: stroke;
+        stroke: #0e1620;
+        stroke-width: 3px;
+        stroke-linejoin: round;
     }
     :global(.xcg-mark) {
         font-size: 9px;
         font-weight: 600;
+        paint-order: stroke;
+        stroke: #0e1620;
+        stroke-width: 3px;
+        stroke-linejoin: round;
     }
     .xcg-readout {
         position: absolute;

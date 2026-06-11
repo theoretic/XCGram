@@ -62,10 +62,14 @@ export const explain = (profile: SoundingProfile, d: Derived): ExplainItem[] => 
     }
 
     // --- CAPE ---
+    // Storm pictograms: none below 1000 J/kg, then one per extra 500 J/kg
+    // (1000 → ⛈, 1500 → ⛈⛈, 2000 → ⛈⛈⛈ …, capped at 5).
+    const stormIcons =
+        d.cape >= 1000 ? ' ' + '⛈️'.repeat(Math.min(5, 1 + Math.floor((d.cape - 1000) / 500))) : '';
     items.push({
         id: 'cape',
         label: 'CAPE',
-        value: `${d.cape} J/kg`,
+        value: `${d.cape} J/kg${stormIcons}`,
         severity: d.cape > 1500 ? 'bad' : d.cape > 500 ? 'warn' : d.cape > 100 ? 'good' : 'neutral',
         what:
             'Convective Available Potential Energy — the total buoyant energy available to a rising parcel above the level of free convection.',
