@@ -31,6 +31,20 @@
                 {/each}
             </select>
             <span class="xcg-place">{place}</span>
+            {#if tab === 'diagram'}
+                <div class="xcg-layer-toggles">
+                    <button
+                        class:active={showClouds}
+                        on:click={() => (showClouds = !showClouds)}
+                        title="Toggle cloud-development layer"
+                    >☁️</button>
+                    <button
+                        class:active={showThermal}
+                        on:click={() => (showThermal = !showThermal)}
+                        title="Toggle thermal-activity column"
+                    >🔥</button>
+                </div>
+            {/if}
         </div>
         {#if profiles.length}
             <TimeSlider {profiles} bind:index on:change={onTime} />
@@ -48,7 +62,7 @@
     {:else if status === 'error'}
         <p class="xcg-hint xcg-err">Could not load data for this point.</p>
     {:else if profile && derived}
-        <Sounding {profile} {derived} />
+        <Sounding {profile} {derived} {showClouds} {showThermal} />
         <Explainer items={items} />
         <div class="xcg-foot">Model: {modelName} · {profiles.length} steps</div>
     {/if}
@@ -102,6 +116,10 @@
     let nowTick = Date.now();
     /** Bumped on refresh to invalidate the Layers overlay. */
     let refreshNonce = 0;
+
+    /** Diagram helper layers — both visible by default. */
+    let showClouds = true;
+    let showThermal = true;
 
     // Windy product ids are camelCase (iconEu, iconD2); our list uses hyphens.
     const productKey = (m: string) => m.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
@@ -280,6 +298,26 @@
         font-size: 12px;
         color: #8b97a3;
         font-variant-numeric: tabular-nums;
+    }
+    .xcg-layer-toggles {
+        margin-left: auto; // float the toggles to the right of the controls row
+        display: inline-flex;
+        gap: 4px;
+    }
+    .xcg-layer-toggles button {
+        background: #16212e;
+        border: 1px solid #2a3340;
+        border-radius: 4px;
+        padding: 2px 6px;
+        font-size: 13px;
+        line-height: 1.2;
+        cursor: pointer;
+        opacity: 0.45; // dimmed when the layer is off (emoji colour kept intact)
+    }
+    .xcg-layer-toggles button.active {
+        opacity: 1;
+        border-color: #4a9eff;
+        background: #1c2a3a;
     }
     .xcg-hint {
         font-size: 12.5px;

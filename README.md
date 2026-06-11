@@ -21,6 +21,14 @@ is live before you click anything.
   lines, environmental temperature (red) and dew point (blue), a lifted surface
   **parcel** (green), and wind barbs.
 - **Markers** for cumulus cloud base (LCL) and thermal top (EL).
+- **Cloud-development layer** (toggle ☁️): a light-grey bunch of circles per humid
+  layer, centred on the pressure axis. Circle count and opacity scale with
+  cloudiness; the bunch's vertical extent mirrors the cloud-layer thickness.
+- **Thermal-activity column** (toggle 🔥): stacked 100 m bars on the pressure axis
+  whose length and colour follow the local environmental lapse rate — red where
+  it's dry-adiabatic or steeper (unstable), green through inversions (stable).
+- Both helper layers are **on by default**; toggle them from the buttons floated
+  right in the controls row (Diagram tab).
 - **Hover readout**: height, pressure, temperature, dew point and wind at the cursor.
 - **Zoom & pan**: mouse wheel (zoom about cursor), pinch (touch), drag to pan in
   both directions, double-click or the ⤢ button to reset. Zoom is a uniform
@@ -95,6 +103,7 @@ src/
     thermo.ts          parcel theory: LCL, CAPE/CIN, thermal top, lapse rates …
     windyData.ts       Windy meteogram payload → SoundingProfile[] (+ updateTs)
     explain.ts         the plain-language explanation cards
+    diagramLayers.ts   cloud-development + thermal-activity diagram helper layers
     grid.ts            coarse-grid viewport sampler + per-point profile cache
     layers.ts          the six overlay definitions + colour ramps
     heatmap.ts         grid → canvas → L.ImageOverlay on the map

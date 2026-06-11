@@ -27,10 +27,14 @@
 
     import { theta, tempFromTheta, liftParcel, esat } from '../lib/thermo';
     import { EPS } from '../lib/levels';
+    import { cloudLayers, thermalColumn } from '../lib/diagramLayers';
     import type { Derived, SoundingProfile } from '../types';
 
     export let profile: SoundingProfile;
     export let derived: Derived;
+    /** Toggleable helper layers (both on by default). */
+    export let showClouds = true;
+    export let showThermal = true;
 
     let svgEl: SVGSVGElement;
     let hover: { x: number; y: number; p: number; gh: number; t: number; td: number; spd: number; dir: number } | null =
@@ -73,6 +77,97 @@
     };
 
     const viewTransform = () => `translate(${view.x},${view.y}) scale(${view.k})`;
+
+    // ── extra helper layers (clouds + thermal column) ──────────────────────────
+
+    /** Plot-local Y for a geopotential height, via the environment gh↔p grid. */
+    const yOfGh = (gh: number): number => {
+        const L = profile.levels;
+        for (let i = 0; i < L.length - 1; i++) {
+            const a = L[i];
+            const b = L[i + 1];
+            if (gh >= a.gh && gh <= b.gh) {
+                const f = (gh - a.gh) / (b.gh - a.gh || 1);
+                return Y(a.p + f * (b.p - a.p));
+            }
+        }
+        return Y(L[L.length - 1].p);
+    };
+
+    /**
+     * Lapse-rate → colour: green (inversion / stable) through to red (dry-
+     * adiabatic or steeper). `tNorm` is the lapse rate over the dry adiabat.
+     */
+    const thermColor = (tNorm: number): string => {
+        const tt = Math.max(0, Math.min(1, tNorm));
+        return `hsl(${Math.round(120 * (1 - tt))}, 70%, 48%)`;
+    };
+
+    /**
+     * Cloud-development mock: one dense bunch of light-grey circles per humid
+     * layer, centred on the left pressure axis (local x = 0). The bunch's
+     * vertical extent mirrors the cloud-layer thickness; circle count and opacity
+     * scale with cloudiness. Horizontal spread is triangular (centre-dense) and
+     * capped at 25 % of the diagram width; the left half spills past the axis and
+     * is clipped at the SVG edge, as requested.
+     */
+    const drawCloudLayer = (g: any) => {
+        if (!showClouds) return;
+        const layers = cloudLayers(profile);
+        const bunchW = 0.25 * CW; // max bunch width = 25 % of diagram width
+        const halfW = bunchW / 2;
+        const grp = g.append('g').attr('class', 'xcg-clouds');
+        layers.forEach(cl => {
+            const yTop = Y(cl.pTop);
+            const yBot = Y(cl.pBot);
+            const bandH = Math.max(6, yBot - yTop); // = cloud-layer thickness
+            const cy = (yTop + yBot) / 2;
+            const n = Math.max(8, Math.round(cl.prob * 64)); // denser
+            for (let i = 0; i < n; i++) {
+                // Triangular distribution → tight, centre-weighted horizontal cluster.
+                const tri = Math.random() + Math.random() - 1; // ~[-1, 1]
+                const cx = tri * halfW;
+                const yy = cy + (Math.random() - 0.5) * bandH;
+                const r = 5 + Math.random() * (5 + cl.prob * 8);
+                const op = Math.min(0.75, 0.16 + cl.prob * 0.45 * (0.6 + 0.4 * Math.random()));
+                grp.append('circle')
+                    .attr('cx', cx)
+                    .attr('cy', yy)
+                    .attr('r', r)
+                    .attr('fill', '#c3c9d2')
+                    .attr('opacity', op)
+                    .attr('vector-effect', 'non-scaling-stroke');
+            }
+        });
+    };
+
+    /**
+     * Thermal-activity column: stacked 100 m bars rising from the left axis. Bar
+     * length and colour both follow the local environmental lapse rate — red and
+     * full-width where it is dry-adiabatic or steeper (unstable), green and a thin
+     * sliver through inversions (stable). Per-height, so it does not grow with
+     * altitude the way an integrated updraft would.
+     */
+    const drawThermalLayer = (g: any) => {
+        if (!showThermal || !derived) return;
+        const { segs } = thermalColumn(profile, derived);
+        if (!segs.length) return;
+        const maxBar = 0.2 * iw;
+        const grp = g.append('g').attr('class', 'xcg-thermal');
+        segs.forEach(s => {
+            const yTop = yOfGh(s.ghTop);
+            const yBot = yOfGh(s.ghBot);
+            const h = Math.max(1, yBot - yTop);
+            const frac = Math.max(0.08, Math.min(1, s.tNorm)); // inversion → min sliver
+            grp.append('rect')
+                .attr('x', 0)
+                .attr('y', yTop)
+                .attr('width', frac * maxBar)
+                .attr('height', h)
+                .attr('fill', thermColor(s.tNorm))
+                .attr('opacity', 0.5);
+        });
+    };
 
     // ── coordinate helpers for the fixed axes layer ────────────────────────────
     // Map from plot-local Y (0..ih) to SVG-root Y through the current view.
@@ -160,6 +255,11 @@
         // are constant screen pixels regardless of the zoom scale k.
         const root = svg.append('g').attr('class', 'zoomroot').attr('transform', viewTransform());
         const g = root.append('g').attr('transform', `translate(${M.left},${M.top})`);
+
+        // Helper layers paint first, behind the thermodynamic curves.
+        drawCloudLayer(g);
+        drawThermalLayer(g);
+
         const plot = g.append('g').attr('clip-path', `url(#${clipId})`);
 
         const sampleP = d3.range(P_BOT, P_TOP - 1, -10);
@@ -434,7 +534,13 @@
         };
     };
 
-    $: if (svgEl && profile) draw();
+    // Redraw on profile change or when a helper layer is toggled (the bare
+    // references register showClouds/showThermal as reactive dependencies).
+    $: if (svgEl && profile) {
+        showClouds;
+        showThermal;
+        draw();
+    }
     onMount(draw);
 </script>
 
