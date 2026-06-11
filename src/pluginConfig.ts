@@ -2,7 +2,7 @@ import type { ExternalPluginConfig } from '@windy/interfaces';
 
 const config: ExternalPluginConfig = {
     name: 'windy-plugin-xcgram',
-    version: '0.2.0',
+    version: '0.2.1',
     icon: '🪂',
     title: 'XCGram — Sounding for pilots',
     description:

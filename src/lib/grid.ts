@@ -45,8 +45,6 @@ export interface SampledGrid {
     cells: GridCell[];
 }
 
-const PLUGIN = 'windy-plugin-xcgram';
-
 // --- profile cache, keyed by model + quantised lat/lon -------------------------
 
 const QUANT = 10; // 0.1° buckets — dedupe near-identical sample points
@@ -59,7 +57,10 @@ const fetchProfiles = (model: Products, lat: number, lon: number): Promise<Sound
     const key = keyOf(String(model), lat, lon);
     let pending = cache.get(key);
     if (!pending) {
-        pending = getMeteogramForecastData(model, { lat, lon, step: 1 } as never, PLUGIN)
+        // Overlays stay at 3-hour resolution on purpose: 1 h would triple the
+        // payload for every grid cell. The diagram's (possibly 1 h) timestamps
+        // map onto these via nearest-profile lookup in heatmap.ts.
+        pending = getMeteogramForecastData(model, { lat, lon, step: 3 } as never)
             .then(res => loadSoundingsFromPayload(res.data, String(model)))
             .catch(() => null);
         cache.set(key, pending);

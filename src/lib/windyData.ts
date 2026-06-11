@@ -1,4 +1,5 @@
 import { getMeteogramForecastData } from '@windy/fetch';
+import { hasAny } from '@windy/subscription';
 import type { LatLon } from '@windy/interfaces.d';
 import type { MeteogramDataPayload, MeteogramDataHash } from '@windy/interfaces.d';
 import type { Products } from '@windy/rootScope.d';
@@ -7,7 +8,7 @@ import { PRESSURE_LEVELS, k2c } from './levels';
 import { dewpointFromRh } from './thermo';
 import type { LevelDatum, SoundingProfile } from '../types';
 
-const PLUGIN = 'windy-plugin-xcgram';
+const HOUR_MS = 3_600_000;
 
 /** Read a numeric series for `layer-level` at hour index i, or NaN. */
 const at = (d: MeteogramDataHash, key: string, i: number): number => {
@@ -86,19 +87,81 @@ export const loadSoundingsFromPayload = (
 };
 
 /**
+ * Linearly interpolate a synthetic SoundingProfile at timestamp `ts` between two
+ * bracketing profiles. This is exactly what the native Windy sounding does: its
+ * decompiled parse step picks the two forecast hours around the requested
+ * timestamp and lerps every matching level (`Ye`/`Je` in
+ * `_shared-nearest-radiosondes.js`).
+ */
+const interpProfile = (a: SoundingProfile, b: SoundingProfile, ts: number): SoundingProfile => {
+    const f = (ts - a.ts) / (b.ts - a.ts);
+    const lerp = (x: number, y: number) => x + f * (y - x);
+    const levels: LevelDatum[] = a.levels.map((la, i) => {
+        const lb = b.levels[i];
+        if (!lb) return la;
+        return {
+            p: la.p,
+            gh: lerp(la.gh, lb.gh),
+            t: lerp(la.t, lb.t),
+            td: lerp(la.td, lb.td),
+            u: lerp(la.u, lb.u),
+            v: lerp(la.v, lb.v),
+            rh: la.rh != null && lb.rh != null ? lerp(la.rh, lb.rh) : la.rh,
+        };
+    });
+    return { ts, levels, elevation: a.elevation };
+};
+
+/**
+ * Fill gaps wider than 1 h with interpolated hourly profiles. No-op when the
+ * server already delivered 1-hour data (Premium accounts), and skips pairs whose
+ * level grids don't line up.
+ */
+const interpolateTo1h = (profiles: SoundingProfile[]): SoundingProfile[] => {
+    if (profiles.length < 2) return profiles;
+    const out: SoundingProfile[] = [];
+    for (let i = 0; i < profiles.length - 1; i++) {
+        const a = profiles[i];
+        const b = profiles[i + 1];
+        out.push(a);
+        const gap = b.ts - a.ts;
+        if (gap <= HOUR_MS || a.levels.length !== b.levels.length) continue;
+        const steps = Math.round(gap / HOUR_MS);
+        for (let s = 1; s < steps; s++) {
+            out.push(interpProfile(a, b, a.ts + s * HOUR_MS));
+        }
+    }
+    out.push(profiles[profiles.length - 1]);
+    return out;
+};
+
+/**
  * Fetch a meteogram for a point and reshape it into per-hour SoundingProfiles.
  *
- * `step: 1` asks node-forecast for 1-hour resolution — the same request the
- * native Windy sounding makes. Models whose point-forecast backend serves 1-hour
- * data (ECMWF, ICON-EU, ICON-D2, AROME) return a 1-hour `hours` array; others
- * fall back to their native step (e.g. GFS 3-hour). No client-side interpolation
- * is added: the slider shows exactly the timestamps the server provides.
+ * Mirrors the native Windy sounding's behaviour exactly (decompiled from
+ * windy.com's `_shared-nearest-radiosondes.js`):
+ *
+ * 1. Request: `getMeteogramForecastData(model, { lat, lon, step: hasAny() ? 1 : 3 },
+ *    { extended: 'true' })`. 1-hour resolution is a **Premium feature**, gated
+ *    server-side on the session token — free accounts are served 3-hour data no
+ *    matter what `step` says. The third argument is a query-params object, NOT
+ *    the plugin name (a string there spreads into garbage query params).
+ * 2. Display: the native sounding follows the 1-hour map timeline by **linearly
+ *    interpolating between the two bracketing forecast profiles**, so its time
+ *    axis reads 1 h even on 3-hour (free-tier) data. `interpolateTo1h` does the
+ *    same; it is a no-op when the data is already hourly.
  */
 export const loadSoundings = async (
     latLon: LatLon,
     model: Products,
 ): Promise<{ profiles: SoundingProfile[]; model: string; updateTs: number }> => {
-    const { data: payload } = await getMeteogramForecastData(model, { ...latLon, step: 1 } as never, PLUGIN);
+    const params = { ...latLon, step: hasAny() ? 1 : 3 };
+    const { data: payload } = await getMeteogramForecastData(
+        model,
+        params as never,
+        { extended: 'true' } as never,
+    );
     const updateTs = (payload as MeteogramDataPayload).header?.updateTs ?? 0;
-    return { profiles: loadSoundingsFromPayload(payload, String(model)), model: String(model), updateTs };
+    const raw = loadSoundingsFromPayload(payload, String(model));
+    return { profiles: interpolateTo1h(raw), model: String(model), updateTs };
 };
